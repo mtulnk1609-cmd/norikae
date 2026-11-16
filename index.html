@@ -328,6 +328,53 @@
         line-height: 1.7;
         color: var(--text-sub);
       }
+      /* 履歴 */
+      .history { margin-top: 26px; }
+      .history h2 {
+        font-size: 20px;
+        margin: 0 0 2px;
+        letter-spacing: 0.03em;
+      }
+      .history-note {
+        font-size: 12px;
+        color: var(--text-sub);
+        margin: 0 0 10px;
+      }
+      .history-item {
+        background: var(--card);
+        border: 2px solid var(--line);
+        border-radius: 14px;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .history-item .h-viewed {
+        font-size: 12px;
+        color: var(--text-sub);
+        font-variant-numeric: tabular-nums;
+      }
+      .history-item .h-dir {
+        display: inline-block;
+        background: var(--pink-soft);
+        color: var(--pink-dark);
+        font-size: 12px;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 1px 9px;
+        margin-left: 6px;
+      }
+      .history-item .h-route { font-weight: 700; font-variant-numeric: tabular-nums; }
+      .history-item .h-transfer { color: var(--pink-dark); font-weight: 700; }
+      .history-empty {
+        font-size: 14px;
+        color: var(--text-sub);
+        background: var(--card);
+        border: 2px dashed var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        text-align: center;
+      }
       footer {
         margin-top: 24px;
         font-size: 12px;
@@ -375,6 +422,12 @@
 
       <p class="search-note" id="searchNote"></p>
       <div id="results"></div>
+
+      <section class="history">
+        <h2>📖 今日見たルート</h2>
+        <p class="history-note">この端末の中に、今日の分だけ残るよ。日付が変わると自動で消えるよ。</p>
+        <div id="historyList"></div>
+      </section>
 
       <footer>
         <p>時刻表ベースの計算だよ。所要時間は目安で、遅延は反映されないよ。<br>
@@ -535,7 +588,79 @@
           '</div>' + trainNotesHtml(leg);
       }
 
-      function render() {
+      /* ===== 履歴（今日の分だけ・端末内に保存） ===== */
+      var HISTORY_PREFIX = 'norikae-history-';
+      var HISTORY_MAX = 30;
+      function historyKey() {
+        var d = new Date();
+        return HISTORY_PREFIX + d.getFullYear() + '-' +
+          ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      }
+      function pruneHistory() {
+        try {
+          var today = historyKey();
+          var remove = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf(HISTORY_PREFIX) === 0 && k !== today) remove.push(k);
+          }
+          remove.forEach(function (k) { localStorage.removeItem(k); });
+        } catch (e) { /* 保存できない環境では何もしない */ }
+      }
+      function loadHistory() {
+        try {
+          var raw = localStorage.getItem(historyKey());
+          var arr = raw ? JSON.parse(raw) : [];
+          return Array.isArray(arr) ? arr : [];
+        } catch (e) { return []; }
+      }
+      function saveHistory(entries) {
+        try { localStorage.setItem(historyKey(), JSON.stringify(entries)); } catch (e) {}
+      }
+      function logHistory(r, fromStation, toStation) {
+        var now = new Date();
+        var entry = {
+          viewed: now.getHours() + ':' + ('0' + now.getMinutes()).slice(-2),
+          dir: state.dir,
+          from: fromStation,
+          to: toStation,
+          dep: r.leg1.dep,
+          arr: r.finalArr,
+          transferStation: '横浜',
+          wait: r.wait
+        };
+        var entries = loadHistory();
+        var last = entries[entries.length - 1];
+        if (last && last.dir === entry.dir && last.from === entry.from && last.to === entry.to &&
+            last.dep === entry.dep && last.arr === entry.arr && last.wait === entry.wait) {
+          return; // 同じルートの連続表示は1件にまとめる
+        }
+        entries.push(entry);
+        if (entries.length > HISTORY_MAX) entries = entries.slice(entries.length - HISTORY_MAX);
+        saveHistory(entries);
+      }
+      function renderHistory() {
+        var box = document.getElementById('historyList');
+        if (!box) return;
+        var entries = loadHistory();
+        if (entries.length === 0) {
+          box.innerHTML = '<div class="history-empty">今日はまだ見たルートがないよ</div>';
+          return;
+        }
+        var html = '';
+        for (var i = entries.length - 1; i >= 0; i--) {
+          var e = entries[i];
+          html += '<div class="history-item">' +
+            '<span class="h-viewed">' + e.viewed + ' に見た</span>' +
+            '<span class="h-dir">' + (e.dir === 'go' ? 'ゆき' : 'かえり') + '</span><br>' +
+            '<span class="h-route">' + e.from + ' ' + fmt(e.dep) + '発 → ' + e.to + ' ' + fmt(e.arr) + '着</span>' +
+            ' <span class="h-transfer">（' + e.transferStation + 'のりかえ ' + e.wait + '分）</span>' +
+            '</div>';
+        }
+        box.innerHTML = html;
+      }
+
+      function render(record) {
         var now = new Date();
         var nowMin = now.getHours() * 60 + now.getMinutes();
         var key = diaKey(now);
@@ -572,6 +697,7 @@
             : (state.mode === 'dep'
               ? '<div class="empty">' + fmt(refMin) + ' 以降の便は今日は終わったよ💤<br>また明日ね。</div>'
               : '<div class="empty">今日の対象時間帯の便は終わったよ💤<br>また明日ね。</div>');
+          renderHistory();
           return;
         }
 
@@ -616,6 +742,8 @@
           html += '</div>';
         });
         box.innerHTML = html;
+        if (record !== false) logHistory(results[0], fromStation, toStation);
+        renderHistory();
       }
 
       function syncControls() {
@@ -689,14 +817,15 @@
       document.getElementById('timeInput').addEventListener('change', onTimeChange);
       document.getElementById('timeInput').addEventListener('input', onTimeChange);
 
+      pruneHistory();
       syncControls();
       render();
-      setInterval(render, 30 * 1000);
+      setInterval(function () { render(false); }, 30 * 1000);
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) render();
+        if (!document.hidden) render(false);
       });
-      window.addEventListener('focus', render);
-      window.addEventListener('pageshow', render);
+      window.addEventListener('focus', function () { render(false); });
+      window.addEventListener('pageshow', function () { render(false); });
     </script>
   </body>
 </html>
