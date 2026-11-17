@@ -328,19 +328,56 @@
         line-height: 1.7;
         color: var(--text-sub);
       }
-      /* 履歴 */
-      .history { margin-top: 26px; }
-      .history h2 {
+      /* カード上部（バッジ＋ハート） */
+      .card-top {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 8px;
+        min-height: 48px;
+      }
+      .card-top .badge { margin-bottom: 0; margin-top: 6px; }
+      .fav-btn {
+        margin-left: auto;
+        flex: 0 0 auto;
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        border: 2px solid var(--line);
+        background: var(--card);
+        color: var(--pink-dark);
+        font-size: 26px;
+        line-height: 1;
+        font-family: inherit;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .fav-btn.active {
+        background: var(--pink);
+        border-color: var(--pink);
+        color: #fff;
+      }
+      .fav-btn:active { transform: scale(0.94); }
+
+      /* ハートで決めたルート */
+      .favorites { margin-top: 26px; }
+      .favorites h2 {
         font-size: 20px;
         margin: 0 0 2px;
         letter-spacing: 0.03em;
       }
-      .history-note {
+      .favorites-note {
         font-size: 12px;
         color: var(--text-sub);
         margin: 0 0 10px;
       }
-      .history-item {
+      .fav-item {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
         background: var(--card);
         border: 2px solid var(--line);
         border-radius: 14px;
@@ -349,12 +386,8 @@
         font-size: 14px;
         line-height: 1.6;
       }
-      .history-item .h-viewed {
-        font-size: 12px;
-        color: var(--text-sub);
-        font-variant-numeric: tabular-nums;
-      }
-      .history-item .h-dir {
+      .fav-item .fav-main { flex: 1; min-width: 0; }
+      .fav-item .f-dir {
         display: inline-block;
         background: var(--pink-soft);
         color: var(--pink-dark);
@@ -362,12 +395,37 @@
         font-weight: 700;
         border-radius: 999px;
         padding: 1px 9px;
-        margin-left: 6px;
+        margin-right: 6px;
       }
-      .history-item .h-route { font-weight: 700; font-variant-numeric: tabular-nums; }
-      .history-item .h-transfer { color: var(--pink-dark); font-weight: 700; }
-      .history-empty {
+      .fav-item .f-route { font-weight: 700; font-variant-numeric: tabular-nums; }
+      .fav-item .f-transfer { color: var(--pink-dark); font-weight: 700; }
+      .fav-item .f-legs {
+        display: block;
+        font-size: 13px;
+        color: var(--text-sub);
+        font-variant-numeric: tabular-nums;
+      }
+      .fav-remove {
+        flex: 0 0 auto;
+        width: 44px;
+        height: 44px;
+        border-radius: 999px;
+        border: 2px solid var(--pink);
+        background: var(--pink);
+        color: #fff;
+        font-size: 22px;
+        line-height: 1;
+        font-family: inherit;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .fav-remove:active { transform: scale(0.94); }
+      .fav-empty {
         font-size: 14px;
+        line-height: 1.7;
         color: var(--text-sub);
         background: var(--card);
         border: 2px dashed var(--line);
@@ -429,10 +487,10 @@
       <p class="search-note" id="searchNote"></p>
       <div id="results"></div>
 
-      <section class="history">
-        <h2>📖 今日見たルート</h2>
-        <p class="history-note">この端末の中に、今日の分だけ残るよ。日付が変わると自動で消えるよ。</p>
-        <div id="historyList"></div>
+      <section class="favorites">
+        <h2>♥ 今日乗るって決めたルート</h2>
+        <p class="favorites-note">調べたルートの ♡ を押したものだけがここに残るよ。今日の終電が終わったら自動で消えるよ。</p>
+        <div id="favList"></div>
       </section>
 
       <footer>
@@ -651,78 +709,147 @@
           '</div>' + trainNotesHtml(leg);
       }
 
-      /* ===== 履歴（今日の分だけ・端末内に保存） ===== */
-      var HISTORY_PREFIX = 'norikae-history-';
-      var HISTORY_MAX = 30;
-      function historyKey() {
-        var d = new Date();
-        return HISTORY_PREFIX + d.getFullYear() + '-' +
+      /* ===== ハートで決めたルート（今日の分だけ・終電が終わったら消える） ===== */
+      var FAV_KEY = 'norikae-favorites-v1';
+      var currentResults = [];
+      var currentFrom = '';
+      var currentTo = '';
+
+      function todayStr(d) {
+        return d.getFullYear() + '-' +
           ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
       }
-      function pruneHistory() {
+      // 時刻表データ上の最終出発（分）。その日のダイヤ（自動判定）から全路線の最大の発時刻を取る
+      function lastDepartureMinFor(date) {
+        var data = DATA[autoDiaKey(date)];
+        var max = 0;
+        if (data) {
+          Object.keys(data).forEach(function (k) {
+            var arr = data[k];
+            if (!Array.isArray(arr)) return;
+            arr.forEach(function (e) {
+              var dep = Array.isArray(e) ? e[0] : e;
+              if (typeof dep === 'number' && dep > max) max = dep;
+            });
+          });
+        }
+        return max || (23 * 60 + 59);
+      }
+      function favoritesExpired(savedDate, now) {
+        if (!savedDate) return true;
+        if (savedDate !== todayStr(now)) return true; // 前日以前の分は、その日の終電を過ぎている
+        var nowMin = now.getHours() * 60 + now.getMinutes();
+        return nowMin > lastDepartureMinFor(now);
+      }
+      function loadFavorites() {
         try {
-          var today = historyKey();
+          var raw = localStorage.getItem(FAV_KEY);
+          if (!raw) return [];
+          var obj = JSON.parse(raw);
+          if (!obj || !Array.isArray(obj.items)) return [];
+          if (favoritesExpired(obj.date, new Date())) {
+            localStorage.removeItem(FAV_KEY);
+            return [];
+          }
+          return obj.items;
+        } catch (e) { return []; }
+      }
+      function saveFavorites(items) {
+        try {
+          if (!items || items.length === 0) {
+            localStorage.removeItem(FAV_KEY);
+          } else {
+            localStorage.setItem(FAV_KEY, JSON.stringify({ date: todayStr(new Date()), items: items }));
+          }
+        } catch (e) {}
+      }
+      function pruneOldData() {
+        try {
           var remove = [];
           for (var i = 0; i < localStorage.length; i++) {
             var k = localStorage.key(i);
-            if (k && k.indexOf(HISTORY_PREFIX) === 0 && k !== today) remove.push(k);
+            if (k && k.indexOf('norikae-history-') === 0) remove.push(k);
           }
           remove.forEach(function (k) { localStorage.removeItem(k); });
-        } catch (e) { /* 保存できない環境では何もしない */ }
+        } catch (e) {}
+        loadFavorites(); // 期限切れのハートはここで消える
       }
-      function loadHistory() {
-        try {
-          var raw = localStorage.getItem(historyKey());
-          var arr = raw ? JSON.parse(raw) : [];
-          return Array.isArray(arr) ? arr : [];
-        } catch (e) { return []; }
+      function routeId(r) {
+        return [state.dir, state.origin, state.station, r.leg1.dep, r.leg2 ? r.leg2.dep : '-', r.finalArr].join('|');
       }
-      function saveHistory(entries) {
-        try { localStorage.setItem(historyKey(), JSON.stringify(entries)); } catch (e) {}
+      function isFavorite(id) {
+        var items = loadFavorites();
+        for (var i = 0; i < items.length; i++) if (items[i].id === id) return true;
+        return false;
       }
-      function logHistory(r, fromStation, toStation) {
-        var now = new Date();
-        var entry = {
-          viewed: now.getHours() + ':' + ('0' + now.getMinutes()).slice(-2),
-          dir: state.dir,
-          from: fromStation,
-          to: toStation,
-          dep: r.leg1.dep,
-          arr: r.finalArr,
-          transferStation: r.leg2 ? '横浜' : null,
-          wait: r.wait
+      function legSnapshot(leg) {
+        if (!leg) return null;
+        return {
+          dep: leg.dep, arr: leg.arr,
+          type: leg.type || null, dest: leg.dest || null,
+          line: leg.line, bunko: leg.bunko || null, is2100: !!leg.is2100
         };
-        var entries = loadHistory();
-        var last = entries[entries.length - 1];
-        if (last && last.dir === entry.dir && last.from === entry.from && last.to === entry.to &&
-            last.dep === entry.dep && last.arr === entry.arr && last.wait === entry.wait) {
-          return; // 同じルートの連続表示は1件にまとめる
-        }
-        entries.push(entry);
-        if (entries.length > HISTORY_MAX) entries = entries.slice(entries.length - HISTORY_MAX);
-        saveHistory(entries);
       }
-      function renderHistory() {
-        var box = document.getElementById('historyList');
+      function toggleFavorite(r, fromStation, toStation) {
+        var id = routeId(r);
+        var items = loadFavorites();
+        var idx = -1;
+        for (var i = 0; i < items.length; i++) if (items[i].id === id) { idx = i; break; }
+        if (idx >= 0) {
+          items.splice(idx, 1);
+        } else {
+          var now = new Date();
+          items.push({
+            id: id,
+            dir: state.dir,
+            from: fromStation,
+            to: toStation,
+            dep: r.leg1.dep,
+            arr: r.finalArr,
+            wait: r.wait,
+            transferStation: r.leg2 ? '横浜' : null,
+            leg1: legSnapshot(r.leg1),
+            leg2: legSnapshot(r.leg2),
+            savedAt: now.getHours() + ':' + ('0' + now.getMinutes()).slice(-2)
+          });
+        }
+        saveFavorites(items);
+      }
+      function removeFavoriteById(id) {
+        saveFavorites(loadFavorites().filter(function (it) { return it.id !== id; }));
+      }
+      function renderFavorites() {
+        var box = document.getElementById('favList');
         if (!box) return;
-        var entries = loadHistory();
+        var entries = loadFavorites().slice().sort(function (a, b) { return a.dep - b.dep; });
         if (entries.length === 0) {
-          box.innerHTML = '<div class="history-empty">今日はまだ見たルートがないよ</div>';
+          box.innerHTML = '<div class="fav-empty">まだ決めたルートはないよ。<br>調べたルートの ♡ を押すと、ここに残るよ。</div>';
           return;
         }
         var html = '';
-        for (var i = entries.length - 1; i >= 0; i--) {
-          var e = entries[i];
-          html += '<div class="history-item">' +
-            '<span class="h-viewed">' + e.viewed + ' に見た</span>' +
-            '<span class="h-dir">' + (e.dir === 'go' ? 'ゆき' : 'かえり') + '</span><br>' +
-            '<span class="h-route">' + e.from + ' ' + fmt(e.dep) + '発 → ' + e.to + ' ' + fmt(e.arr) + '着</span>' +
+        entries.forEach(function (e) {
+          html += '<div class="fav-item">' +
+            '<div class="fav-main">' +
+            '<span class="f-dir">' + (e.dir === 'go' ? 'ゆき' : 'かえり') + '</span>' +
+            '<span class="f-route">' + e.from + ' ' + fmt(e.dep) + '発 → ' + e.to + ' ' + fmt(e.arr) + '着</span><br>' +
             (e.transferStation
-              ? ' <span class="h-transfer">（' + e.transferStation + 'のりかえ ' + e.wait + '分）</span>'
-              : ' <span class="h-transfer">（のりかえなし）</span>') +
+              ? '<span class="f-transfer">（' + e.transferStation + 'のりかえ ' + e.wait + '分）</span>'
+              : '<span class="f-transfer">（のりかえなし）</span>') +
+            (e.leg2
+              ? '<span class="f-legs">' + e.from + ' ' + fmt(e.leg1.dep) + '発 → 横浜 ' + fmt(e.leg1.arr) + '着 ／ 横浜 ' + fmt(e.leg2.dep) + '発 → ' + e.to + ' ' + fmt(e.leg2.arr) + '着</span>'
+              : '') +
+            '</div>' +
+            '<button class="fav-remove" type="button" data-fav-remove="' + e.id + '" aria-label="このルートのハートを外す" title="ハートを外す">♥</button>' +
             '</div>';
-        }
+        });
         box.innerHTML = html;
+        var btns = box.querySelectorAll('[data-fav-remove]');
+        for (var i = 0; i < btns.length; i++) {
+          btns[i].addEventListener('click', function () {
+            removeFavoriteById(this.getAttribute('data-fav-remove'));
+            render(false);
+          });
+        }
       }
 
       function render(record) {
@@ -763,20 +890,32 @@
             : (state.mode === 'dep'
               ? '<div class="empty">' + fmt(refMin) + ' 以降の便は今日は終わったよ💤<br>また明日ね。</div>'
               : '<div class="empty">今日の対象時間帯の便は終わったよ💤<br>また明日ね。</div>');
-          renderHistory();
+          currentResults = [];
+          renderFavorites();
           return;
         }
 
         var bestArr = results[0].finalArr;
+        currentResults = results;
+        currentFrom = fromStation;
+        currentTo = toStation;
         var html = '';
         results.forEach(function (r, idx) {
           var isBest = idx === 0;
           var sameAsBest = !isBest && r.finalArr === bestArr;
+          var rid = routeId(r);
+          var fav = isFavorite(rid);
           html += '<div class="card' + (isBest ? ' fastest' : '') + '">';
+          html += '<div class="card-top">';
           if (state.mode === 'arr') {
             if (isBest) html += '<span class="badge">🎀 いちばん遅く出られる</span>';
           } else if (isBest) html += '<span class="badge">🎀 いちばん早く着く</span>';
           else if (sameAsBest) html += '<span class="badge same">後から出ても同じ到着</span>';
+          html += '<button class="fav-btn' + (fav ? ' active' : '') + '" type="button" data-fav-idx="' + idx + '"' +
+            ' aria-pressed="' + (fav ? 'true' : 'false') + '"' +
+            ' aria-label="' + (fav ? 'このルートのハートを外す' : 'このルートを今日乗るルートに決める') + '"' +
+            ' title="' + (fav ? 'ハートを外す' : '今日乗るって決める') + '">' + (fav ? '♥' : '♡') + '</button>';
+          html += '</div>';
           var inMin;
           if (state.mode === 'dep') {
             var dDep = r.leg1.dep - refMin;
@@ -812,8 +951,17 @@
           html += '</div>';
         });
         box.innerHTML = html;
-        if (record !== false) logHistory(results[0], fromStation, toStation);
-        renderHistory();
+        var favBtns = box.querySelectorAll('.fav-btn');
+        for (var f = 0; f < favBtns.length; f++) {
+          favBtns[f].addEventListener('click', function () {
+            var r2 = currentResults[parseInt(this.getAttribute('data-fav-idx'), 10)];
+            if (r2) {
+              toggleFavorite(r2, currentFrom, currentTo);
+              render(false);
+            }
+          });
+        }
+        renderFavorites();
       }
 
       function syncControls() {
@@ -901,7 +1049,7 @@
       document.getElementById('timeInput').addEventListener('change', onTimeChange);
       document.getElementById('timeInput').addEventListener('input', onTimeChange);
 
-      pruneHistory();
+      pruneOldData();
       syncControls();
       render();
       setInterval(function () { render(false); }, 30 * 1000);
