@@ -509,6 +509,27 @@
         return out;
       }
 
+      // 第1レグ a から乗り換えられる第2レグの候補を返す（最大3件・重複なし）
+      // ・最初に乗れる便（待ち時間が一番短い）
+      // ・一番早く着く便（後から出る特急などに追い越されるケース対策）
+      // ・最初に乗れる特急／快特（少し待っても速い便を選べるように）
+      function leg2Candidates(a, l2) {
+        var need = a.arr + BUFFER;
+        var first = null, fastest = null, express = null;
+        for (var j = 0; j < l2.length; j++) {
+          var b = l2[j];
+          if (b.dep < need) continue;
+          if (!first) first = b;
+          if (!fastest || b.arr < fastest.arr) fastest = b;
+          if (!express && (b.type === '特急' || b.type === '快特')) express = b;
+        }
+        var out = [];
+        [first, fastest, express].forEach(function (b) {
+          if (b && out.indexOf(b) === -1) out.push(b);
+        });
+        return out;
+      }
+
       function compute(nowMin, data) {
         var l1 = leg1List(data), l2 = leg2List(data);
         var results = [];
@@ -517,13 +538,9 @@
           var a = l1[i];
           if (a.dep < nowMin) continue;
           taken++;
-          var need = a.arr + BUFFER;
-          var b = null;
-          for (var j = 0; j < l2.length; j++) {
-            if (l2[j].dep >= need) { b = l2[j]; break; }
-          }
-          if (!b) continue;
-          results.push({ leg1: a, leg2: b, wait: b.dep - a.arr, finalArr: b.arr });
+          leg2Candidates(a, l2).forEach(function (b) {
+            results.push({ leg1: a, leg2: b, wait: b.dep - a.arr, finalArr: b.arr });
+          });
         }
         results.sort(function (x, y) {
           if (x.finalArr !== y.finalArr) return x.finalArr - y.finalArr;
@@ -538,14 +555,10 @@
         var results = [];
         for (var i = 0; i < l1.length; i++) {
           var a = l1[i];
-          var need = a.arr + BUFFER;
-          var b = null;
-          for (var j = 0; j < l2.length; j++) {
-            if (l2[j].dep >= need) { b = l2[j]; break; }
-          }
-          if (!b) continue;
-          if (b.arr > targetMin) continue;
-          results.push({ leg1: a, leg2: b, wait: b.dep - a.arr, finalArr: b.arr });
+          leg2Candidates(a, l2).forEach(function (b) {
+            if (b.arr > targetMin) return;
+            results.push({ leg1: a, leg2: b, wait: b.dep - a.arr, finalArr: b.arr });
+          });
         }
         results.sort(function (x, y) {
           if (x.leg1.dep !== y.leg1.dep) return y.leg1.dep - x.leg1.dep;
