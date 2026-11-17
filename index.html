@@ -394,6 +394,12 @@
       </div>
 
       <div class="chips">
+        <span class="chip-label" id="originLabel">出発地</span>
+        <button class="chip active" id="chipMyo" type="button">妙蓮寺</button>
+        <button class="chip" id="chipYoko" type="button">横浜</button>
+      </div>
+
+      <div class="chips">
         <span class="chip-label" id="chipLabel">目的地</span>
         <button class="chip active" id="chipChuo" type="button">横須賀中央</button>
         <button class="chip" id="chipHakkei" type="button">金沢八景</button>
@@ -445,6 +451,7 @@
 
       var state = {
         dir: new Date().getHours() < 13 ? 'go' : 'back',  // 初期表示：13時前はゆき・以降はかえり
+        origin: 'myo',    // 'myo' 妙蓮寺（横浜でのりかえ） / 'yoko' 横浜（京急のみ・のりかえなし）
         station: 'chuo',  // 'chuo' 横須賀中央 / 'hakkei' 金沢八景
         dia: 'auto',      // 'auto' / 'weekday' / 'saturday' / 'holiday'
         mode: 'now',      // 'now' いま / 'dep' 出発時刻指定 / 'arr' 到着時刻指定
@@ -567,6 +574,49 @@
         return results.slice(0, 3);
       }
 
+      // 横浜発着（京急のみ・のりかえなし）の候補リスト
+      function directList(data) {
+        var out = [];
+        var src = state.dir === 'go'
+          ? (state.station === 'chuo' ? data.yokoToChuo : data.yokoToHakkei)
+          : (state.station === 'chuo' ? data.chuoToYoko : data.hakkeiToYoko);
+        src.forEach(function (e) {
+          out.push({ dep: e[0], arr: e[1], type: e[2], dest: e[3], bunko: e[4], is2100: e[5], line: 'keikyu' });
+        });
+        return out;
+      }
+
+      // 横浜発着：refMin 以降の便から、早く着く順に最大3件
+      function computeDirect(refMin, data) {
+        var list = directList(data);
+        var upcoming = [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].dep >= refMin) upcoming.push(list[i]);
+        }
+        var results = upcoming.slice(0, 6).map(function (leg) {
+          return { leg1: leg, leg2: null, wait: null, finalArr: leg.arr };
+        });
+        results.sort(function (x, y) {
+          if (x.finalArr !== y.finalArr) return x.finalArr - y.finalArr;
+          return x.leg1.dep - y.leg1.dep;
+        });
+        return results.slice(0, 3);
+      }
+
+      // 横浜発着・到着時刻指定：targetMin までに着く便を、遅く出られる順に最大3件
+      function computeDirectArr(targetMin, data) {
+        var results = [];
+        directList(data).forEach(function (leg) {
+          if (leg.arr > targetMin) return;
+          results.push({ leg1: leg, leg2: null, wait: null, finalArr: leg.arr });
+        });
+        results.sort(function (x, y) {
+          if (x.leg1.dep !== y.leg1.dep) return y.leg1.dep - x.leg1.dep;
+          return y.finalArr - x.finalArr;
+        });
+        return results.slice(0, 3);
+      }
+
       function trainNotesHtml(leg) {
         if (leg.line !== 'keikyu') return '';
         var notes = '';
@@ -639,7 +689,7 @@
           to: toStation,
           dep: r.leg1.dep,
           arr: r.finalArr,
-          transferStation: '横浜',
+          transferStation: r.leg2 ? '横浜' : null,
           wait: r.wait
         };
         var entries = loadHistory();
@@ -667,7 +717,9 @@
             '<span class="h-viewed">' + e.viewed + ' に見た</span>' +
             '<span class="h-dir">' + (e.dir === 'go' ? 'ゆき' : 'かえり') + '</span><br>' +
             '<span class="h-route">' + e.from + ' ' + fmt(e.dep) + '発 → ' + e.to + ' ' + fmt(e.arr) + '着</span>' +
-            ' <span class="h-transfer">（' + e.transferStation + 'のりかえ ' + e.wait + '分）</span>' +
+            (e.transferStation
+              ? ' <span class="h-transfer">（' + e.transferStation + 'のりかえ ' + e.wait + '分）</span>'
+              : ' <span class="h-transfer">（のりかえなし）</span>') +
             '</div>';
         }
         box.innerHTML = html;
@@ -684,23 +736,24 @@
         document.getElementById('diaName').textContent =
           key === 'weekday' ? '平日ダイヤ' : (key === 'saturday' ? '土曜ダイヤ' : '休日ダイヤ');
 
-        var fromStation = state.dir === 'go' ? '妙蓮寺'
-          : (state.station === 'chuo' ? '横須賀中央' : '金沢八景');
-        var toStation = state.dir === 'go'
-          ? (state.station === 'chuo' ? '横須賀中央' : '金沢八景') : '妙蓮寺';
+        var homeStation = state.origin === 'yoko' ? '横浜' : '妙蓮寺';
+        var companyStation = state.station === 'chuo' ? '横須賀中央' : '金沢八景';
+        var fromStation = state.dir === 'go' ? homeStation : companyStation;
+        var toStation = state.dir === 'go' ? companyStation : homeStation;
 
         var box = document.getElementById('results');
         var note = document.getElementById('searchNote');
+        var direct = state.origin === 'yoko';
         var results, refMin = nowMin;
         if (state.mode === 'dep' && state.timeMin != null) {
           refMin = state.timeMin;
-          results = compute(refMin, data);
+          results = direct ? computeDirect(refMin, data) : compute(refMin, data);
           note.textContent = fmt(refMin) + ' 以降に出発する便だよ';
         } else if (state.mode === 'arr' && state.timeMin != null) {
-          results = computeArr(state.timeMin, data);
+          results = direct ? computeDirectArr(state.timeMin, data) : computeArr(state.timeMin, data);
           note.textContent = fmt(state.timeMin) + ' までに着く便（遅く出られる順）だよ';
         } else {
-          results = compute(nowMin, data);
+          results = direct ? computeDirect(nowMin, data) : compute(nowMin, data);
           note.textContent = '';
         }
 
@@ -741,14 +794,18 @@
             '<span class="in-min">' + inMin + '</span>' +
             '</div>';
           html += '<div class="legs">';
-          html += legHtml(r.leg1, fromStation, '横浜');
-          var tight = r.wait <= 5;
-          var tightLabel = r.wait <= 4 ? 'ギリギリ！急いでね' : 'タイト！急いでね';
-          html += '<div class="transfer-row' + (tight ? ' tight' : '') + '">' +
-            '横浜でのりかえ <span class="t-min">' + r.wait + '分</span>' +
-            (tight ? '<span class="tight-tag">' + tightLabel + '</span>' : '') +
-            '</div>';
-          html += legHtml(r.leg2, '横浜', toStation);
+          if (r.leg2) {
+            html += legHtml(r.leg1, fromStation, '横浜');
+            var tight = r.wait <= 5;
+            var tightLabel = r.wait <= 4 ? 'ギリギリ！急いでね' : 'タイト！急いでね';
+            html += '<div class="transfer-row' + (tight ? ' tight' : '') + '">' +
+              '横浜でのりかえ <span class="t-min">' + r.wait + '分</span>' +
+              (tight ? '<span class="tight-tag">' + tightLabel + '</span>' : '') +
+              '</div>';
+            html += legHtml(r.leg2, '横浜', toStation);
+          } else {
+            html += legHtml(r.leg1, fromStation, toStation);
+          }
           html += '</div>';
           html += '<div class="arrive-final">' + toStation + ' <span class="a-time">' + fmt(r.finalArr) + '</span>着' +
             '<span class="total">所要 約' + durText(r.finalArr - r.leg1.dep) + '</span></div>';
@@ -762,6 +819,14 @@
       function syncControls() {
         document.getElementById('tabGo').classList.toggle('active', state.dir === 'go');
         document.getElementById('tabBack').classList.toggle('active', state.dir === 'back');
+        document.querySelector('#tabGo .route-mini').textContent =
+          state.origin === 'yoko' ? '横浜 → 京急' : '妙蓮寺 → 横浜 → 京急';
+        document.querySelector('#tabBack .route-mini').textContent =
+          state.origin === 'yoko' ? '京急 → 横浜' : '京急 → 横浜 → 妙蓮寺';
+        document.getElementById('chipMyo').classList.toggle('active', state.origin === 'myo');
+        document.getElementById('chipYoko').classList.toggle('active', state.origin === 'yoko');
+        document.getElementById('originLabel').textContent =
+          state.dir === 'go' ? '出発地' : '到着地';
         document.getElementById('chipChuo').classList.toggle('active', state.station === 'chuo');
         document.getElementById('chipHakkei').classList.toggle('active', state.station === 'hakkei');
         document.getElementById('chipLabel').textContent =
@@ -793,6 +858,12 @@
       });
       document.getElementById('tabBack').addEventListener('click', function () {
         state.dir = 'back'; syncControls(); render();
+      });
+      document.getElementById('chipMyo').addEventListener('click', function () {
+        state.origin = 'myo'; syncControls(); render();
+      });
+      document.getElementById('chipYoko').addEventListener('click', function () {
+        state.origin = 'yoko'; syncControls(); render();
       });
       document.getElementById('chipChuo').addEventListener('click', function () {
         state.station = 'chuo'; syncControls(); render();
