@@ -957,16 +957,60 @@
         }
       }
 
+      /* ===== かえりタブ専用：位置情報で出発地を自動選択（ページ内で1回だけ） ===== */
+      var geoTried = false;           // 位置取得は1回だけ（ページ内メモリのみ）
+      var stationManuallySet = false; // 出発地チップを手で選んだら自動選択で上書きしない
+      var STATION_COORDS = {
+        hakkei: { lat: 35.3317, lon: 139.6474 }, // 金沢八景駅
+        chuo: { lat: 35.2789, lon: 139.6709 }    // 横須賀中央駅
+      };
+      function distanceKm(lat1, lon1, lat2, lon2) {
+        var R = 6371;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLon = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+      function tryAutoSelectStation() {
+        if (state.dir !== 'back') return; // かえりタブのときだけ
+        if (geoTried) return;
+        geoTried = true;
+        if (!navigator.geolocation) return;
+        try {
+          navigator.geolocation.getCurrentPosition(function (pos) {
+            if (state.dir !== 'back') return;   // 返ってきた時点でゆきなら変えない
+            if (stationManuallySet) return;     // 手で選んだ方を優先する
+            var lat = pos.coords.latitude, lon = pos.coords.longitude;
+            var dHakkei = distanceKm(lat, lon, STATION_COORDS.hakkei.lat, STATION_COORDS.hakkei.lon);
+            var dChuo = distanceKm(lat, lon, STATION_COORDS.chuo.lat, STATION_COORDS.chuo.lon);
+            var nearest = dHakkei <= dChuo ? 'hakkei' : 'chuo';
+            if (Math.min(dHakkei, dChuo) > 3) return; // どちらの駅からも3kmより遠ければ今の選択のまま
+            if (state.station !== nearest) {
+              state.station = nearest;
+              syncControls();
+              render();
+            }
+          }, function () {
+            // 拒否・タイムアウト・エラー時は静かに何もしない
+          }, { timeout: 10000 });
+        } catch (e) { /* 位置情報が使えない環境では何もしない */ }
+      }
+
       document.getElementById('tabGo').addEventListener('click', function () {
         state.dir = 'go'; syncControls(); render();
       });
       document.getElementById('tabBack').addEventListener('click', function () {
         state.dir = 'back'; syncControls(); render();
+        tryAutoSelectStation(); // かえりが初めて表示されたときだけ位置情報で出発地を選ぶ
       });
       document.getElementById('chipChuo').addEventListener('click', function () {
+        stationManuallySet = true;
         state.station = 'chuo'; syncControls(); render();
       });
       document.getElementById('chipHakkei').addEventListener('click', function () {
+        stationManuallySet = true;
         state.station = 'hakkei'; syncControls(); render();
       });
       var diaBtns = document.querySelectorAll('.dia-btn');
@@ -1002,6 +1046,7 @@
       pruneOldData();
       syncControls();
       render();
+      tryAutoSelectStation(); // 初期タブがかえりのときだけ位置情報で出発地を選ぶ（ゆきでは何もしない）
       setInterval(function () { render(false); }, 30 * 1000);
       document.addEventListener('visibilitychange', function () {
         if (!document.hidden) render(false);
